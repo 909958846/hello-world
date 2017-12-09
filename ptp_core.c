@@ -205,20 +205,25 @@ USBH_StatusTypeDef USBH_PTP_Process (USBH_HandleTypeDef *phost)
     
     USBH_BulkSendData (phost,
                        MTP_Handle->ptp.data_ptr,
-                       MTP_Handle->DataOutEpSize , 
+                       MTP_Handle->ptp.data_length,//MTP_Handle->DataOutEpSize , 
                        MTP_Handle->DataOutPipe,
                        1);
     
     
-    MTP_Handle->ptp.state  = PTP_DATA_OUT_PHASE_WAIT_STATE;    
+    MTP_Handle->ptp.state  = PTP_DATA_OUT_PHASE_WAIT_STATE;
+		
     break;
     
   case PTP_DATA_OUT_PHASE_WAIT_STATE:
     URB_Status = USBH_LL_GetURBState(phost, MTP_Handle->DataOutPipe);     
-    
+//    rt_kprintf("ptp.state:data out phase state.\n");
+//		rt_kprintf("ptp.state:%d.\n",URB_Status);
     if(URB_Status == USBH_URB_DONE)
     {
-      /* Adjust Data pointer and data length */
+//      rt_kprintf("ptp.state:USBH_URB_DONE.\n");
+//			rt_kprintf("ptp.state:data length %d.\n",MTP_Handle->ptp.data_length);
+//			rt_kprintf("ptp.state:data length %d.\n",MTP_Handle->DataOutEpSize);
+			/* Adjust Data pointer and data length */
       if(MTP_Handle->ptp.data_length > MTP_Handle->DataOutEpSize)
       {
         MTP_Handle->ptp.data_ptr += MTP_Handle->DataOutEpSize;
@@ -236,6 +241,7 @@ USBH_StatusTypeDef USBH_PTP_Process (USBH_HandleTypeDef *phost)
       else
       {
         MTP_Handle->ptp.data_length = 0;
+//				rt_kprintf("ptp.state:data length %d.\n",MTP_Handle->ptp.data_length);
       } 
       
       /* More Data To be Sent */
@@ -344,14 +350,19 @@ USBH_StatusTypeDef USBH_PTP_Process (USBH_HandleTypeDef *phost)
                           MTP_Handle->DataInPipe);
     
     MTP_Handle->ptp.state  = PTP_RESPONSE_WAIT_STATE;
+		URB_Status = USBH_LL_GetURBState(phost, MTP_Handle->DataInPipe);
+    //rt_kprintf("ptp.state:%d.\n",URB_Status);
     break;
     
   case PTP_RESPONSE_WAIT_STATE:
     URB_Status = USBH_LL_GetURBState(phost, MTP_Handle->DataInPipe);
-    
+    //rt_kprintf("ptp.state:%d.\n",URB_Status);
+		//rt_kprintf("ptp.state:data length %d.\n",MTP_Handle->ptp.data_length);
+		//rt_kprintf("ptp.state:data length %d.\n",MTP_Handle->DataOutEpSize);
     if(URB_Status == USBH_URB_DONE)
     {
-       USBH_PTP_GetResponse (phost, &ptp_container);
+//      rt_kprintf("ptp.state:USBH_URB_DONE.\n"); 
+			USBH_PTP_GetResponse (phost, &ptp_container);
        
        if(ptp_container.Code == PTP_RC_OK)
        {
@@ -988,8 +999,128 @@ USBH_StatusTypeDef USBH_PTP_GetDevicePropDesc (USBH_HandleTypeDef *phost,
 			devicepropertydesc->FORM.Range.MinimumValue.u8 = *(uint8_t *)(&data[8]);
 			devicepropertydesc->FORM.Range.MaximumValue.u8 = *(uint8_t *)(&data[9]);
 			devicepropertydesc->FORM.Range.StepSize.u8 = *(uint8_t *)(&data[10]);*/
+			rt_kprintf(">>>>> Device Property Describing Dataset:\n");
+			uint8_t *DevicePropertyPtr=data;
+			//Device PropertyCode
+			devicepropertydesc->DevicePropertyCode = LE16(DevicePropertyPtr);
+			DevicePropertyPtr+=2;
+			rt_kprintf("DevicePropertyCode : %x\n", devicepropertydesc->DevicePropertyCode);
+			//Data Type
+			devicepropertydesc->DataType = LE16(DevicePropertyPtr);
+			DevicePropertyPtr+=2;
+			//rt_kprintf("DataType : %x\n", devicepropertydesc->DataType);
+			switch(devicepropertydesc->DataType)
+			{
+				case 0xFFFF: 		//STR,Variable-Length Unicode String
+					rt_kprintf("DataType : STR,Variable-Length Unicode String(0xFFFF)\n");
+					devicepropertydesc->GetSet = *(int8_t *)(DevicePropertyPtr);
+					DevicePropertyPtr+=1;
+					//GetSet
+					if(devicepropertydesc->GetSet==0x00)
+						rt_kprintf("GetSet :Get(0x00)\n");
+					else
+						rt_kprintf("GetSet :Get or Set(0x01)\n");
+					//Factory Default Value,STR����
+					uint8_t strlength=0;
+					strlength=*(uint8_t *)(DevicePropertyPtr);
+					DevicePropertyPtr+=1;
+					for(int i=0;i<strlength;i++)
+					{
+						devicepropertydesc->FactoryDefaultValue.str[i]=*(char *)(DevicePropertyPtr);
+						DevicePropertyPtr+=2;
+					}
+					devicepropertydesc->FactoryDefaultValue.str[strlength]='\0';
+					rt_kprintf("FactoryDefaultValue : %s\n", devicepropertydesc->FactoryDefaultValue.str);
+					//Current Value
+					strlength=*(uint8_t *)(DevicePropertyPtr);
+					DevicePropertyPtr+=1;	
+					for(int i=0;i<strlength;i++)
+					{
+						devicepropertydesc->CurrentValue.str[i]=*(char *)(DevicePropertyPtr);
+						DevicePropertyPtr+=2;
+					}
+					devicepropertydesc->CurrentValue.str[strlength]='\0';
+					rt_kprintf("CurrentValue : %s\n", devicepropertydesc->CurrentValue.str);
+					//Form Flag
+					devicepropertydesc->FormFlag = *(int8_t *)(DevicePropertyPtr);
+					switch(devicepropertydesc->FormFlag)
+					{
+						case 0x00:  //This is for properties like DateTime. In this case the FORM field is not present.
+							rt_kprintf("FromFlag : None(0x00)\n");
+							break;
+						
+						case 0x01: //Range-Form
+							rt_kprintf("FromFlag : Range-Form(0x01)\n");
+						
+							strlength=*(uint8_t *)(DevicePropertyPtr);
+							rt_kprintf("strlength : %d",strlength);
+							DevicePropertyPtr+=1;
+							for(int i=0;i<strlength;i++)
+							{
+								devicepropertydesc->FORM.Range.MinimumValue.str[i]=*(char *)(DevicePropertyPtr);
+								DevicePropertyPtr+=2;
+							}
+							rt_kprintf("From.Range.MinimumValue : %s\n",devicepropertydesc->FORM.Range.MinimumValue.str);
+							
+							strlength=*(uint8_t *)(DevicePropertyPtr);
+							rt_kprintf("strlength : %d",strlength);
+							DevicePropertyPtr+=1;
+							for(int i=0;i<strlength;i++)
+							{
+								devicepropertydesc->FORM.Range.MaximumValue.str[i]=*(char *)(DevicePropertyPtr);
+								DevicePropertyPtr+=2;
+							}
+							rt_kprintf("From.Range.MaximumValue : %s\n",devicepropertydesc->FORM.Range.MaximumValue.str);
+							
+							strlength=*(uint8_t *)(DevicePropertyPtr);
+							rt_kprintf("strlength : %d",strlength);
+							DevicePropertyPtr+=1;
+							for(int i=0;i<strlength;i++)
+							{
+								devicepropertydesc->FORM.Range.StepSize.str[i]=*(char *)(DevicePropertyPtr);
+								DevicePropertyPtr+=2;
+							}
+							rt_kprintf("From.Range.StepSize : %s\n",devicepropertydesc->FORM.Range.StepSize.str);
+							break;
+							
+						case 0x02: //Enumeration-Form
+							rt_kprintf("FromFlag : Enumeration-Form(0x02)\n");
+							DevicePropertyPtr+=1;
+							devicepropertydesc->FORM.Enum.NumberOfValues = *(uint16_t *)(DevicePropertyPtr);
+							DevicePropertyPtr+=2;
+							rt_kprintf("From.Enum.SupportedValue : %d\n",devicepropertydesc->FORM.Enum.NumberOfValues);
+							for(int j=0;j<devicepropertydesc->FORM.Enum.NumberOfValues;j++)
+								{
+									strlength=*(uint8_t *)(DevicePropertyPtr);
+									rt_kprintf("strlength : %d\n",strlength);
+									DevicePropertyPtr+=1;
+									for(int i=0;i<strlength;i++)
+									{
+										devicepropertydesc->FORM.Enum.SupportedValue[j].str[i]=*(char *)(DevicePropertyPtr);
+										DevicePropertyPtr+=2;
+									}
+									rt_kprintf("From.Enum.SupportedValue[%d] : %s\n", j,devicepropertydesc->FORM.Enum.SupportedValue[j].str);
+								}
+							break;
+							
+						default:
+							break;
+						}
+					
+					break;
+						
+				default:
+					break;
+							
+				}
+						
+
 			
-			//Variable-length Unicode String range����
+			
+			
+			
+			
+		/*	//Variable-length Unicode String range����
 			uint8_t *DevicePropertyPtr=data;
 			devicepropertydesc->DevicePropertyCode = LE16(DevicePropertyPtr);
 			DevicePropertyPtr+=2;
@@ -1020,23 +1151,23 @@ USBH_StatusTypeDef USBH_PTP_GetDevicePropDesc (USBH_HandleTypeDef *phost,
 				DevicePropertyPtr+=1;
 				devicepropertydesc->FORM.Enum.NumberOfValues = *(uint16_t *)(DevicePropertyPtr);
 				DevicePropertyPtr+=2;
-				debug_printf("From.Enum.SupportedValue:%d",devicepropertydesc->FORM.Enum.NumberOfValues);
+				rt_kprintf("From.Enum.SupportedValue:%d",devicepropertydesc->FORM.Enum.NumberOfValues);
 				for(int j=0;j<devicepropertydesc->FORM.Enum.NumberOfValues;j++)
 					{
 						strlength=*(uint8_t *)(DevicePropertyPtr);
-						debug_printf("strlength:%d",strlength);
+						rt_kprintf("strlength:%d",strlength);
 						DevicePropertyPtr+=1;
 						for(int i=0;i<strlength;i++)
 						{
 							devicepropertydesc->FORM.Enum.SupportedValue[j].str[i]=*(char *)(DevicePropertyPtr);
 							DevicePropertyPtr+=2;
 						}
-						debug_printf("From.Enum.SupportedValue[%d] : %s\n", j,devicepropertydesc->FORM.Enum.SupportedValue[j].str);
+						rt_kprintf("From.Enum.SupportedValue[%d] : %s\n", j,devicepropertydesc->FORM.Enum.SupportedValue[j].str);
 				}
 			//devicepropertydesc->FORM.Range.MaximumValue.u8 = *(uint8_t *)(&data[9]);
 			//devicepropertydesc->FORM.Range.StepSize.u8 = *(uint8_t *)(&data[10]);*/
-			}
-    }
+			
+    } 
     break;
     
   default:
@@ -1868,6 +1999,329 @@ USBH_StatusTypeDef USBH_PTP_SendObject (USBH_HandleTypeDef *phost,
 */
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
+USBH_StatusTypeDef USBH_PTP_CanonEOS_Capture(USBH_HandleTypeDef *phost)
+{
+	//Operation(EOS_OC_Capture, 0, NULL);
+	USBH_StatusTypeDef   status = USBH_BUSY; 
+  MTP_HandleTypeDef    *MTP_Handle =  (MTP_HandleTypeDef *)phost->pActiveClass->pData; 
+  PTP_ContainerTypedef  ptp_container;
+  
+  switch(MTP_Handle->ptp.req_state)
+  {
+  case PTP_REQ_SEND:
 
+    /* Set Data phase container */
+		//MTP_Handle->ptp.data_ptr = (uint8_t *)&(MTP_Handle->ptp.data_container);
+    //MTP_Handle->ptp.data_length = 0;
+    //MTP_Handle->ptp.data_packet_counter = 0;
+   //MTP_Handle->ptp.data_packet = 0;
+    MTP_Handle->ptp.flags = PTP_DP_NODATA;
+    
+    /* Fill operation request params */      
+    ptp_container.Code = 0x910f; //#define EOS_OC_Capture 0x910f
+    ptp_container.SessionID = MTP_Handle->ptp.session_id;
+    ptp_container.Transaction_ID = MTP_Handle->ptp.transaction_id ++;
+    //ptp_container.Param1 = session;
+    ptp_container.Nparam = 0;
+    
+    /* convert request packet inti USB raw packet*/
+    USBH_PTP_SendRequest (phost, &ptp_container); 
+        
+    /* Setup State machine and start transfer */
+    MTP_Handle->ptp.state = PTP_OP_REQUEST_STATE;
+    MTP_Handle->ptp.req_state = PTP_REQ_WAIT;
+    status = USBH_BUSY;
+#if (USBH_USE_OS == 1)
+    osMessagePut ( phost->os_event, USBH_STATE_CHANGED_EVENT, 0);
+#endif      
+    break;
+    
+  case PTP_REQ_WAIT:
+    status = USBH_PTP_Process(phost);
+    break;
+    
+  default:
+    break;
+  }
+  return status;
+	
+}
 
+USBH_StatusTypeDef USBH_PTP_CanonEOS_MovieSelect(USBH_HandleTypeDef *phost,uint8_t mode)
+{
+	//Operation(EOS_OC_Capture, 0, NULL);
+	USBH_StatusTypeDef   status = USBH_BUSY; 
+  MTP_HandleTypeDef    *MTP_Handle =  (MTP_HandleTypeDef *)phost->pActiveClass->pData; 
+  PTP_ContainerTypedef  ptp_container;
+  
+  switch(MTP_Handle->ptp.req_state)
+  {
+  case PTP_REQ_SEND:
+
+    /* Set Data phase container */
+		//MTP_Handle->ptp.data_ptr = (uint8_t *)&(MTP_Handle->ptp.data_container);
+    //MTP_Handle->ptp.data_length = 0;
+    //MTP_Handle->ptp.data_packet_counter = 0;
+   //MTP_Handle->ptp.data_packet = 0;
+    MTP_Handle->ptp.flags = PTP_DP_NODATA;
+    
+    /* Fill operation request params */ 
+		if(mode)
+			ptp_container.Code = 0x9133; //#define PTP_OC_CANON_EOS_MovieSelectSWOn	0x9133
+		else
+			ptp_container.Code = 0x9134;	//#define PTP_OC_CANON_EOS_MovieSelectSWOff	0x9134
+    ptp_container.SessionID = MTP_Handle->ptp.session_id;
+    ptp_container.Transaction_ID = MTP_Handle->ptp.transaction_id ++;
+    //ptp_container.Param1 = session;
+    ptp_container.Nparam = 0;
+    
+    /* convert request packet inti USB raw packet*/
+    USBH_PTP_SendRequest (phost, &ptp_container); 
+        
+    /* Setup State machine and start transfer */
+    MTP_Handle->ptp.state = PTP_OP_REQUEST_STATE;
+    MTP_Handle->ptp.req_state = PTP_REQ_WAIT;
+    status = USBH_BUSY;
+#if (USBH_USE_OS == 1)
+    osMessagePut ( phost->os_event, USBH_STATE_CHANGED_EVENT, 0);
+#endif      
+    break;
+    
+  case PTP_REQ_WAIT:
+    status = USBH_PTP_Process(phost);
+    break;
+    
+  default:
+    break;
+  }
+  return status;
+	
+}
+
+USBH_StatusTypeDef USBH_PTP_CloseSession (USBH_HandleTypeDef *phost)
+{
+  USBH_StatusTypeDef   status = USBH_BUSY; 
+  MTP_HandleTypeDef    *MTP_Handle =  (MTP_HandleTypeDef *)phost->pActiveClass->pData; 
+  PTP_ContainerTypedef  ptp_container;
+  
+  switch(MTP_Handle->ptp.req_state)
+  {
+  case PTP_REQ_SEND:
+
+    /* Init session params */
+    //MTP_Handle->ptp.transaction_id = 0x00000000;
+    //MTP_Handle->ptp.session_id = session;
+    MTP_Handle->ptp.flags = PTP_DP_NODATA;
+    
+    /* Fill operation request params */      
+    ptp_container.Code = 0x9110;//define EOS_OC_SetDevicePropValue 0x9110 
+    ptp_container.SessionID = MTP_Handle->ptp.session_id;
+    ptp_container.Transaction_ID = MTP_Handle->ptp.transaction_id ++;
+    //ptp_container.Param1 = session;
+    ptp_container.Nparam = 0;
+    
+    /* convert request packet inti USB raw packet*/
+    USBH_PTP_SendRequest (phost, &ptp_container); 
+        
+    /* Setup State machine and start transfer */
+    MTP_Handle->ptp.state = PTP_OP_REQUEST_STATE;
+    MTP_Handle->ptp.req_state = PTP_REQ_WAIT;
+    status = USBH_BUSY;
+#if (USBH_USE_OS == 1)
+    osMessagePut ( phost->os_event, USBH_STATE_CHANGED_EVENT, 0);
+#endif      
+    break;
+    
+  case PTP_REQ_WAIT:
+    status = USBH_PTP_Process(phost);
+    break;
+    
+  default:
+    break;
+  }
+  return status;
+}	
+
+USBH_StatusTypeDef USBH_PTP_CanonEOS_SwitchLiveView (USBH_HandleTypeDef *phost,uint32_t sw)
+{
+  //ptp_error = SetProperty(EOS_DPC_LiveView, (on) ? 2 : 0)
+	USBH_StatusTypeDef   status = USBH_BUSY; 
+  MTP_HandleTypeDef    *MTP_Handle =  (MTP_HandleTypeDef *)phost->pActiveClass->pData; 
+  PTP_ContainerTypedef  ptp_container;
+  
+  switch(MTP_Handle->ptp.req_state)
+  {
+  case PTP_REQ_SEND:
+
+    /* Init session params */
+    //MTP_Handle->ptp.transaction_id = 0x00000000;
+    //MTP_Handle->ptp.session_id = session;
+    MTP_Handle->ptp.flags = PTP_DP_SENDDATA;
+		
+		MTP_Handle->ptp.data_container.length = 4+2+2+4+12;
+		MTP_Handle->ptp.data_container.type=PTP_USB_CONTAINER_DATA;
+		MTP_Handle->ptp.data_container.code=0x9110;
+		MTP_Handle->ptp.data_container.trans_id=MTP_Handle->ptp.transaction_id;
+		MTP_Handle->ptp.data_container.payload.params.param1=0x0000000CU;
+		MTP_Handle->ptp.data_container.payload.params.param2=0x0000D1B0U;  //#define PTP_DPC_CANON_EOS_EVFOutputDevice		0xD1b0
+		MTP_Handle->ptp.data_container.payload.params.param3=sw;
+	
+		MTP_Handle->ptp.data_ptr = (uint8_t *)&(MTP_Handle->ptp.data_container);
+    MTP_Handle->ptp.data_packet_counter = 0;
+    MTP_Handle->ptp.data_packet = 0;
+    MTP_Handle->ptp.iteration = 0;
+    MTP_Handle->ptp.data_length=4+2+2+4+12;
+    /* Fill operation request params */      
+    ptp_container.Code = 0x9110;//define EOS_OC_SetDevicePropValue 0x9110 
+    ptp_container.SessionID = MTP_Handle->ptp.session_id;
+    ptp_container.Transaction_ID = MTP_Handle->ptp.transaction_id++;
+    //ptp_container.Param1 = 0x0000000C;
+		//ptp_container.Param2 = 0xD1B0;//(define EOS_DPC_LiveView 0xD1B0)
+		//ptp_container.Param3 = 2;//(ON=2ELSE =0)
+    //ptp_container.Nparam = 0;
+    ptp_container.Nparam = 0;
+    
+    /* convert request packet inti USB raw packet*/
+    USBH_PTP_SendRequest (phost, &ptp_container); 
+        
+    /* Setup State machine and start transfer */
+    MTP_Handle->ptp.state = PTP_OP_REQUEST_STATE;
+    MTP_Handle->ptp.req_state = PTP_REQ_WAIT;
+    status = USBH_BUSY;
+#if (USBH_USE_OS == 1)
+    osMessagePut ( phost->os_event, USBH_STATE_CHANGED_EVENT, 0);
+#endif      
+    break;
+    
+  case PTP_REQ_WAIT:
+    status = USBH_PTP_Process(phost);
+    break;
+    
+  default:
+    break;
+  }
+  return status;
+}	
+
+USBH_StatusTypeDef USBH_PTP_CanonEOS_SetProperty (USBH_HandleTypeDef *phost,uint32_t prop,uint32_t val)
+{
+  //ptp_error = SetProperty(EOS_DPC_LiveView, (on) ? 2 : 0)
+	USBH_StatusTypeDef   status = USBH_BUSY; 
+  MTP_HandleTypeDef    *MTP_Handle =  (MTP_HandleTypeDef *)phost->pActiveClass->pData; 
+  PTP_ContainerTypedef  ptp_container;
+  
+  switch(MTP_Handle->ptp.req_state)
+  {
+  case PTP_REQ_SEND:
+
+    /* Init session params */
+    //MTP_Handle->ptp.transaction_id = 0x00000000;
+    //MTP_Handle->ptp.session_id = session;
+    MTP_Handle->ptp.flags = PTP_DP_SENDDATA;
+		
+		MTP_Handle->ptp.data_container.length = 4+2+2+4+12;
+		MTP_Handle->ptp.data_container.type=PTP_USB_CONTAINER_DATA;
+		MTP_Handle->ptp.data_container.code=0x9110; //#define PTP_OC_CANON_EOS_SetDevicePropValueEx	0x9110
+		MTP_Handle->ptp.data_container.trans_id=MTP_Handle->ptp.transaction_id;
+		MTP_Handle->ptp.data_container.payload.params.param1=0x0000000CU;
+		MTP_Handle->ptp.data_container.payload.params.param2=prop;  //#define PTP_DPC_CANON_EOS_EVFMode		0xD1b1
+		MTP_Handle->ptp.data_container.payload.params.param3=val;
+	
+		MTP_Handle->ptp.data_ptr = (uint8_t *)&(MTP_Handle->ptp.data_container);
+    MTP_Handle->ptp.data_packet_counter = 0;
+    MTP_Handle->ptp.data_packet = 0;
+    MTP_Handle->ptp.iteration = 0;
+    MTP_Handle->ptp.data_length=4+2+2+4+12;
+    /* Fill operation request params */      
+    ptp_container.Code = 0x9110;//define EOS_OC_SetDevicePropValue 0x9110 
+    ptp_container.SessionID = MTP_Handle->ptp.session_id;
+    ptp_container.Transaction_ID = MTP_Handle->ptp.transaction_id ++;
+    //ptp_container.Param1 = 0x0000000C;
+		//ptp_container.Param2 = 0xD1B0;//(define EOS_DPC_LiveView 0xD1B0)
+		//ptp_container.Param3 = 2;//(ON=2ELSE =0)
+    //ptp_container.Nparam = 0;
+    ptp_container.Nparam = 0;
+    
+    /* convert request packet inti USB raw packet*/
+    USBH_PTP_SendRequest (phost, &ptp_container); 
+        
+    /* Setup State machine and start transfer */
+    MTP_Handle->ptp.state = PTP_OP_REQUEST_STATE;
+    MTP_Handle->ptp.req_state = PTP_REQ_WAIT;
+    status = USBH_BUSY;
+#if (USBH_USE_OS == 1)
+    osMessagePut ( phost->os_event, USBH_STATE_CHANGED_EVENT, 0);
+#endif      
+    break;
+    
+  case PTP_REQ_WAIT:
+    status = USBH_PTP_Process(phost);
+    break;
+    
+  default:
+    break;
+  }
+  return status;
+}	
+
+USBH_StatusTypeDef USBH_PTP_CanonEOS_GetProperty (USBH_HandleTypeDef *phost,uint32_t prop,uint32_t* val)
+{
+  //ptp_error = SetProperty(EOS_DPC_LiveView, (on) ? 2 : 0)
+	USBH_StatusTypeDef   status = USBH_BUSY; 
+  MTP_HandleTypeDef    *MTP_Handle =  (MTP_HandleTypeDef *)phost->pActiveClass->pData; 
+  PTP_ContainerTypedef  ptp_container;
+  
+  switch(MTP_Handle->ptp.req_state)
+  {
+  case PTP_REQ_SEND:
+
+    /* Init session params */
+    //MTP_Handle->ptp.transaction_id = 0x00000000;
+    //MTP_Handle->ptp.session_id = session;
+    MTP_Handle->ptp.flags = PTP_DP_SENDDATA;
+		
+		MTP_Handle->ptp.data_container.length = 4+2+2+4+12;
+		MTP_Handle->ptp.data_container.type=PTP_USB_CONTAINER_DATA;
+		MTP_Handle->ptp.data_container.code=0x9110; //#define PTP_OC_CANON_EOS_SetDevicePropValueEx	0x9110
+		MTP_Handle->ptp.data_container.trans_id=MTP_Handle->ptp.transaction_id;
+		MTP_Handle->ptp.data_container.payload.params.param1=0x0000000CU;
+		MTP_Handle->ptp.data_container.payload.params.param2=prop;  //#define PTP_DPC_CANON_EOS_EVFMode		0xD1b1
+		MTP_Handle->ptp.data_container.payload.params.param3=val;
+	
+		MTP_Handle->ptp.data_ptr = (uint8_t *)&(MTP_Handle->ptp.data_container);
+    MTP_Handle->ptp.data_packet_counter = 0;
+    MTP_Handle->ptp.data_packet = 0;
+    MTP_Handle->ptp.iteration = 0;
+    MTP_Handle->ptp.data_length=4+2+2+4+12;
+    /* Fill operation request params */      
+    ptp_container.Code = 0x9110;//define EOS_OC_SetDevicePropValue 0x9110 
+    ptp_container.SessionID = MTP_Handle->ptp.session_id;
+    ptp_container.Transaction_ID = MTP_Handle->ptp.transaction_id ++;
+    //ptp_container.Param1 = 0x0000000C;
+		//ptp_container.Param2 = 0xD1B0;//(define EOS_DPC_LiveView 0xD1B0)
+		//ptp_container.Param3 = 2;//(ON=2ELSE =0)
+    //ptp_container.Nparam = 0;
+    ptp_container.Nparam = 0;
+    
+    /* convert request packet inti USB raw packet*/
+    USBH_PTP_SendRequest (phost, &ptp_container); 
+        
+    /* Setup State machine and start transfer */
+    MTP_Handle->ptp.state = PTP_OP_REQUEST_STATE;
+    MTP_Handle->ptp.req_state = PTP_REQ_WAIT;
+    status = USBH_BUSY;
+#if (USBH_USE_OS == 1)
+    osMessagePut ( phost->os_event, USBH_STATE_CHANGED_EVENT, 0);
+#endif      
+    break;
+    
+  case PTP_REQ_WAIT:
+    status = USBH_PTP_Process(phost);
+    break;
+    
+  default:
+    break;
+  }
+  return status;
+}	
 
